@@ -2,7 +2,7 @@
 
 A multi-agent system built with **LangGraph**, where a supervisor agent dynamically routes a user's query between a **researcher** (web search) and a **mathematician** (calculations), looping until it has enough information to produce a final answer. Includes a Streamlit UI that visualizes the routing decisions and the agent trace in real time.
 
-![Control Room demo]("C:\Users\kuntal.chakraborty\Downloads\multiagent.png")
+![Control Room demo](multiagent.png)
 
 ---
 
