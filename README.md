@@ -27,8 +27,9 @@ researcher  mathematician│
 
 1. The **supervisor** node reads the original query and everything done so far, then makes a structured routing decision: send the task to `researcher`, `mathematician`, or move to `final`.
 2. The **researcher** node runs a Tavily web search and reports back to the supervisor.
-3. The **mathematician** node extracts the exact mathematical expression from the query using a structured-output LLM call, evaluates it safely, and reports back to the supervisor.
-4. The supervisor keeps looping between workers until it decides enough information has been gathered, then routes to **final**, which writes a single clean answer for the user.
+3. The **Chart Maker** will create the chart
+4. The **mathematician** node extracts the exact mathematical expression from the query using a structured-output LLM call, evaluates it safely, and reports back to the supervisor.
+5. The supervisor keeps looping between workers until it decides enough information has been gathered, then routes to **final**, which writes a single clean answer for the user.
 
 All routing is handled with LangGraph's `Command(goto=...)` — there's no separate conditional-edges definition; each node decides its own next step.
 
@@ -50,9 +51,8 @@ All routing is handled with LangGraph's `Command(goto=...)` — there's no separ
 
 ```
 .
-├── supervisor_agent.py   # Core agent logic (terminal version, input()-based)
-├── app.py                # Streamlit UI — same logic, with live visualization
-├── requirements.txt
+├── supervisor_agent.py   # Core agent logic (terminal version, input()-based)    # Streamlit UI — same logic, with live visualization            
+├── requirements.txt 
 └── README.md
 ```
 
