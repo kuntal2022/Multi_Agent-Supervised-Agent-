@@ -1,6 +1,6 @@
 # Control Room — Multi-Agent Supervisor System
 
-A multi-agent system built with **LangGraph**, where a supervisor agent dynamically routes a user's query between a **researcher** (web search) and a **mathematician** (calculations), looping until it has enough information to produce a final answer. Includes a Streamlit UI that visualizes the routing decisions and the agent trace in real time.
+A multi-agent system built with **LangGraph**, where a supervisor agent dynamically routes a user's query between a **researcher** (web search), **Chart Maker** and a **mathematician** (calculations), looping until it has enough information to produce a final answer. Includes a Streamlit UI that visualizes the routing decisions and the agent trace in real time.
 
 <a href="https://your-demo-link.com">
   <img src="multiagent.png" alt="Control Room demo" width="400">
@@ -15,11 +15,11 @@ A multi-agent system built with **LangGraph**, where a supervisor agent dynamica
           ↓
      ┌──supervisor◄──────┐
      │     ↓             │
-     │  ┌──┴────┐        │
-     ↓  ↓       ↓        │
+     │  ┌──┴────┐─┐      │
+     ↓  ↓       ↓ ↓      │
 researcher  mathematician│
-     │         │         │
-     └────┬────┘         │
+     │         │  ↓      │
+     └────┬────┘ Chart Maker       
           └───────────────┘   (loop back via Command(goto="supervisor"))
 
      supervisor → "final" → final → END
