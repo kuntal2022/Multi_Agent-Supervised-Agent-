@@ -8,6 +8,7 @@ import os
 import time
 import dotenv
 import streamlit as st
+import plotly.express as px
 from typing import TypedDict, Literal, Annotated
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
@@ -139,6 +140,7 @@ html, body, [class*="css"] {
 .log-supervisor { border-left-color: var(--accent); color: var(--text); }
 .log-researcher { border-left-color: #5fb4ff; color: var(--text); }
 .log-mathematician { border-left-color: #c792ea; color: var(--text); }
+.log-chart_maker { border-left-color: #4dd28c; color: var(--text); }
 .log-final { border-left-color: var(--ok); color: var(--text); }
 
 .tag {
@@ -153,6 +155,7 @@ html, body, [class*="css"] {
 .tag-supervisor { background: var(--accent-dim); color: var(--accent); }
 .tag-researcher { background: #1d3146; color: #5fb4ff; }
 .tag-mathematician { background: #2c1f3d; color: #c792ea; }
+.tag-chart_maker { background: #163328; color: #4dd28c; }
 .tag-final { background: #163328; color: var(--ok); }
 
 @keyframes fadein {
@@ -210,7 +213,7 @@ base_llm = get_llm()
 
 class SupervisorDecision(BaseModel):
     """Supervisor's routing decision - must pick one of these options"""
-    next_agent: Literal["researcher", "mathematician", "final"] = Field(
+    next_agent: Literal["researcher", "mathematician", "chart_maker", "final"] = Field(
         description="Which worker should work next, or 'final' if enough information is gathered."
     )
     reason: str = Field(description="Reasoning behind the decision.")
@@ -226,10 +229,21 @@ class MathStringExtractor(BaseModel):
     math_string: str = Field(description="Extract exact mathematical expression for calculation")
 
 
+class ChartSpec(BaseModel):
+    """Extracted chart specification from the user's query / gathered data"""
+    chart_type: Literal["bar", "line", "pie", "scatter"] = Field(
+        description="The most suitable chart type for this data"
+    )
+    labels: list[str] = Field(description="Category names / x-axis values")
+    values: list[float] = Field(description="Numeric values corresponding to each label")
+    title: str = Field(description="A short, descriptive title for the chart")
+
+
 class SupervisorState(TypedDict):
     query: str
     history: Annotated[list, operator.add]
     final_answer: str
+    chart_path: str
 
 
 def calculate(expression: str) -> str:
@@ -238,6 +252,41 @@ def calculate(expression: str) -> str:
         return str(eval(expression, {"__builtins__": {}}, {}))
     except Exception as e:
         return f"Error: {e}"
+
+
+def create_chart(chart_type: str, labels: list, values: list, title: str):
+    """Build a Plotly figure for the given chart spec. Also saves PNG to disk if possible."""
+    try:
+        if chart_type == "bar":
+            fig = px.bar(x=labels, y=values, title=title)
+        elif chart_type == "line":
+            fig = px.line(x=labels, y=values, title=title, markers=True)
+        elif chart_type == "pie":
+            fig = px.pie(names=labels, values=values, title=title)
+        elif chart_type == "scatter":
+            fig = px.scatter(x=labels, y=values, title=title)
+        else:
+            return None
+
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#11151b",
+            plot_bgcolor="#11151b",
+            font=dict(family="JetBrains Mono, monospace", color="#d9dee5"),
+            title_font=dict(size=18, color="#ff8a3d"),
+        )
+
+        os.makedirs("charts", exist_ok=True)
+        safe_name = title.lower().replace(" ", "_")[:40] or "chart"
+        png_path = f"charts/{safe_name}.png"
+        try:
+            fig.write_image(png_path)  # requires kaleido; optional
+        except Exception:
+            png_path = None
+
+        return fig, png_path
+    except Exception as e:
+        return None, None
 
 
 @st.cache_resource
@@ -261,18 +310,21 @@ def web_search(query: str) -> str:
     return "\n".join(output) if output else "No results found."
 
 
-def supervisor_node(state: SupervisorState) -> Command[Literal["researcher", "mathematician", "final"]]:
+def supervisor_node(state: SupervisorState) -> Command[Literal["researcher", "mathematician", "chart_maker", "final"]]:
     done_so_far = "\n".join(state.get("history", [])) or "Nothing Yet"
     struct_llm = base_llm.with_structured_output(SupervisorDecision)
     query = state["query"]
 
     prompt = f"""
-                You are a supervisor managing 2 workers.
+                You are a supervisor managing 3 workers.
 
                 - "researcher": does a web search for the query asked by the user and gets the
                   relevant part - recent news, updates, factual updates etc
 
                 - "mathematician": does calculation
+
+                - "chart_maker": creates a bar/line/pie/scatter chart whenever the user
+                  explicitly asks to plot, visualize, graph, or chart any data
 
                 Original Query:
                 {query}
@@ -330,6 +382,43 @@ def math_node(state: SupervisorState) -> Command[Literal["supervisor"]]:
     )
 
 
+def chart_node(state: SupervisorState) -> Command[Literal["supervisor"]]:
+    if "log_callback" in st.session_state and st.session_state.log_callback:
+        st.session_state.log_callback("chart_maker", None, "Extracting chart data and plotting...")
+
+    extractor = base_llm.with_structured_output(ChartSpec)
+    done_so_far = "\n".join(state.get("history", [])) or "No prior data."
+
+    prompt = f"""
+    You are a chart-data extractor. Based on the original query and the work
+    completed so far, extract the labels, numeric values, the most suitable
+    chart type, and a short title.
+
+    Original Query:
+    {state['query']}
+
+    Work completed so far:
+    {done_so_far}
+    """
+    spec: ChartSpec = extractor.invoke(prompt)
+
+    fig, png_path = create_chart(spec.chart_type, spec.labels, spec.values, spec.title)
+
+    if fig is not None:
+        st.session_state.last_chart_fig = fig
+        result_text = f"Created a {spec.chart_type} chart titled '{spec.title}' with labels {spec.labels} and values {spec.values}."
+    else:
+        result_text = "Error: could not create chart with the extracted data."
+
+    return Command(
+        goto="supervisor",
+        update={
+            "history": [f"[ChartMaker] {result_text}"],
+            "chart_path": png_path or ""
+        }
+    )
+
+
 def final_node(state: SupervisorState) -> Command[Literal["__end__"]]:
     if "log_callback" in st.session_state and st.session_state.log_callback:
         st.session_state.log_callback("final", None, "Writing final answer...")
@@ -364,6 +453,7 @@ def build_graph():
     builder.add_node("supervisor", supervisor_node)
     builder.add_node("researcher", research_node)
     builder.add_node("mathematician", math_node)
+    builder.add_node("chart_maker", chart_node)
     builder.add_node("final", final_node)
     builder.add_edge(START, "supervisor")
     return builder.compile()
@@ -384,6 +474,8 @@ if "final_answer" not in st.session_state:
     st.session_state.final_answer = None
 if "log_callback" not in st.session_state:
     st.session_state.log_callback = None
+if "last_chart_fig" not in st.session_state:
+    st.session_state.last_chart_fig = None
 
 
 def log_event(agent, goto, reason):
@@ -445,6 +537,9 @@ def render_org_chart(active=None, done=None):
             <div>
                 <div class="{cls('mathematician')}">📐 MATHEMATICIAN</div>
             </div>
+            <div>
+                <div class="{cls('chart_maker')}">📊 CHART MAKER</div>
+            </div>
         </div>
         <div class="vline"></div>
         <div class="{cls('final')}">✍️ FINAL ANSWER</div>
@@ -494,6 +589,7 @@ if st.session_state.final_answer:
 if run_clicked and query.strip():
     st.session_state.events = []
     st.session_state.final_answer = None
+    st.session_state.last_chart_fig = None
     st.session_state.active_node = "supervisor"
 
     done_nodes = set()
@@ -510,18 +606,22 @@ if run_clicked and query.strip():
 
     with st.spinner(""):
         try:
-            result = app.invoke({"query": query, "history": []})
+            result = app.invoke({"query": query, "history": [], "chart_path": ""})
             st.session_state.final_answer = result["final_answer"]
         except Exception as e:
             st.error(f"Something went wrong: {e}")
 
-    render_org_chart(active="final", done={"researcher", "mathematician", "supervisor"})
+    render_org_chart(active="final", done={"researcher", "mathematician", "chart_maker", "supervisor"})
     render_log()
     if st.session_state.final_answer:
         answer_placeholder.markdown(
             f'<div class="answer-panel">{st.session_state.final_answer}</div>',
             unsafe_allow_html=True
         )
+
+    if st.session_state.last_chart_fig is not None:
+        st.markdown("### 📊 Generated Chart")
+        st.plotly_chart(st.session_state.last_chart_fig, use_container_width=True)
 
 elif run_clicked:
     st.warning("Type a question first.")
